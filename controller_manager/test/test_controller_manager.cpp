@@ -27,6 +27,50 @@
 using ::testing::_;
 using ::testing::Return;
 
+class TestControllerManagerWithGlobalNodeRemap : public ::testing::Test
+{
+public:
+  static void SetUpTestCase()
+  {
+    char program_name[] = "test_controller_manager";
+    char ros_args_flag[] = "--ros-args";
+    char remap_flag[] = "-r";
+    char node_remap[] = "__node:=controller_manager";
+    char * argv[] = {program_name, ros_args_flag, remap_flag, node_remap};
+
+    ASSERT_EQ(sizeof(argv) / sizeof(argv[0]), 4u);
+    ASSERT_STREQ(argv[1], "--ros-args");
+    ASSERT_STREQ(argv[2], "-r");
+    rclcpp::init(4, argv);
+  }
+
+  static void TearDownTestCase() { rclcpp::shutdown(); }
+
+  void SetUp() override
+  {
+    executor_ = std::make_shared<rclcpp::executors::SingleThreadedExecutor>();
+    cm_ = std::make_shared<controller_manager::ControllerManager>(
+      std::make_unique<hardware_interface::ResourceManager>(), executor_, "controller_manager");
+  }
+
+protected:
+  std::shared_ptr<rclcpp::Executor> executor_;
+  std::shared_ptr<controller_manager::ControllerManager> cm_;
+};
+
+TEST_F(TestControllerManagerWithGlobalNodeRemap, controller_does_not_inherit_global_node_remap)
+{
+  EXPECT_STREQ(cm_->get_name(), "controller_manager");
+
+  auto test_controller = std::make_shared<test_controller::TestController>();
+  cm_->add_controller(
+    test_controller, test_controller::TEST_CONTROLLER_NAME,
+    test_controller::TEST_CONTROLLER_CLASS_NAME);
+
+  ASSERT_NE(test_controller->get_node(), nullptr);
+  EXPECT_STREQ(test_controller->get_node()->get_name(), test_controller::TEST_CONTROLLER_NAME);
+}
+
 class TestControllerManagerWithStrictness
 : public ControllerManagerFixture<controller_manager::ControllerManager>,
   public testing::WithParamInterface<Strictness>
