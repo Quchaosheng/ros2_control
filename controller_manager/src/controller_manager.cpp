@@ -543,7 +543,8 @@ namespace
  * The deadline does not need to live in the object: only the switch machinery in this file reads
  * and writes it, and only between the request being accepted and the switch being reported.
  */
-std::chrono::steady_clock::time_point switch_deadline = std::chrono::steady_clock::time_point::max();
+std::chrono::steady_clock::time_point switch_deadline =
+  std::chrono::steady_clock::time_point::max();
 
 /// Whether a finite bound was requested and has already passed.
 /**
