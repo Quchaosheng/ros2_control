@@ -18,6 +18,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <exception>
@@ -530,6 +531,32 @@ void unregister_controller_manager_statistics(const std::string & name)
 
 namespace controller_manager
 {
+
+namespace
+{
+/// Deadline of the switch currently in flight.
+/**
+ * Kept out of SwitchParams on purpose. ControllerManager is declared in the public header with no
+ * pimpl, so a new data member changes its size and breaks binary compatibility for anything built
+ * against an older controller_manager -- which is what the abi_check job reported on this PR.
+ *
+ * The deadline does not need to live in the object: only the switch machinery in this file reads
+ * and writes it, and only between the request being accepted and the switch being reported.
+ */
+std::chrono::steady_clock::time_point switch_deadline = std::chrono::steady_clock::time_point::max();
+
+/// Whether a finite bound was requested and has already passed.
+/**
+ * A controller callback that is already running cannot be interrupted, so this can only take
+ * effect between controllers; see activate_controllers().
+ */
+bool deadline_expired()
+{
+  return switch_deadline != std::chrono::steady_clock::time_point::max() &&
+         std::chrono::steady_clock::now() >= switch_deadline;
+}
+}  // namespace
+
 rclcpp::NodeOptions get_cm_node_options()
 {
   rclcpp::NodeOptions node_options;
@@ -1847,7 +1874,7 @@ void ControllerManager::clear_requests()
   switch_params_.activate_asap = false;
   // The deadline belongs to one switch only. Clearing it here keeps unrelated later activation
   // paths, such as the fallback controllers in update(), from seeing a stale deadline.
-  switch_params_.deadline = std::chrono::steady_clock::time_point::max();
+  switch_deadline = std::chrono::steady_clock::time_point::max();
   switch_params_.deactivate_request.clear();
   switch_params_.activate_request.clear();
   switch_params_.to_chained_mode_request.clear();
@@ -2397,7 +2424,7 @@ controller_interface::return_type ControllerManager::switch_controller_cb(
     // deliberately does not set a deadline, because callers that pass 0 ask for no bound, which is
     // what the service definition documents, and switches that legitimately take longer must not
     // start failing because of a default they did not choose.
-    switch_params_.deadline = std::chrono::steady_clock::now() + switch_params_.timeout;
+    switch_deadline = std::chrono::steady_clock::now() + switch_params_.timeout;
   }
   switch_params_.ready_to_switch.store(false, std::memory_order_release);
   switch_params_.do_switch = true;
@@ -2474,7 +2501,7 @@ controller_interface::return_type ControllerManager::switch_controller_cb(
 controller_interface::return_type ControllerManager::report_late_switch_as_timeout(
   std::string & message)
 {
-  if (!switch_params_.deadline_expired())
+  if (!deadline_expired())
   {
     return controller_interface::return_type::OK;
   }
@@ -2724,7 +2751,7 @@ void ControllerManager::activate_controllers(
     // rollback below for a STRICT switch. Only a request that is actually in flight is bounded:
     // update() reuses this function for the fallback controllers while the deadline of an earlier
     // switch may still be set, and those activations must never be blocked by it.
-    if (switch_params_.do_switch && switch_params_.deadline_expired())
+    if (switch_params_.do_switch && deadline_expired())
     {
       RCLCPP_WARN(
         get_logger(),
@@ -2862,7 +2889,7 @@ void ControllerManager::activate_controllers(
   // for it. Reporting the switch as failed is what keeps the caller from being told that a switch
   // succeeded although it did not finish in time. Guarded by do_switch for the same reason as the
   // per-controller check above.
-  if (switch_params_.do_switch && switch_params_.deadline_expired())
+  if (switch_params_.do_switch && deadline_expired())
   {
     RCLCPP_WARN(
       get_logger(), "The switch controller timeout expired during the activation of controllers.");

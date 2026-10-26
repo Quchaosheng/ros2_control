@@ -751,7 +751,6 @@ private:
       strictness = 0;
       activate_asap = false;
       ready_to_switch = false;
-      deadline = std::chrono::steady_clock::time_point::max();
     }
 
     std::atomic_bool do_switch{false};
@@ -761,22 +760,6 @@ private:
     int strictness;
     std::atomic_bool activate_asap{false};
     std::chrono::nanoseconds timeout;
-    /// Instant the switch has to be completed by; time_point::max() means that no bound is
-    /// enforced. Only a caller-provided finite timeout sets this, which deliberately excludes the
-    /// historical "timeout of 0 is treated as 1s" default: that value is what callers that never
-    /// thought about the timeout get, and enforcing it would start failing switches which are
-    /// known to take longer, e.g. controllers with a slow on_activate().
-    std::chrono::steady_clock::time_point deadline = std::chrono::steady_clock::time_point::max();
-
-    /// Whether a finite bound was requested and has already passed. A controller callback that is
-    /// already running cannot be interrupted, so this can only take effect between controllers;
-    /// see activate_controllers().
-    bool deadline_expired() const
-    {
-      return deadline != std::chrono::steady_clock::time_point::max() &&
-             std::chrono::steady_clock::now() >= deadline;
-    }
-
     // conditional variable and mutex to wait for the switch to complete
     std::condition_variable cv;
     std::mutex mutex;
