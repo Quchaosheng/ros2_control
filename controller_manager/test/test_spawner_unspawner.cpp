@@ -770,6 +770,54 @@ TEST_F(TestLoadController, unload_on_kill_with_sigterm)
   ASSERT_EQ(cm_->get_loaded_controllers().size(), 0ul);
 }
 
+TEST_F(TestLoadController, unload_on_kill_with_repeated_sigint)
+{
+  // A burst of SIGINTs (e.g. Ctrl-C pressed repeatedly) must not interrupt the cleanup and leave
+  // controllers loaded: the follow-up signals have to be ignored once shutdown has started.
+  ControllerManagerRunner cm_runner(this);
+  cm_->set_parameter(rclcpp::Parameter("ctrl_3.type", test_controller::TEST_CONTROLLER_CLASS_NAME));
+  // timeout is only a safety net in case the spawner never exits
+  const std::string spawner_cmd =
+    "timeout --signal=KILL 30 " + std::string(coveragepy_script) +
+    " $(ros2 pkg prefix controller_manager)/lib/controller_manager/spawner "
+    "ctrl_3 -c test_controller_manager --unload-on-kill";
+  auto spawner_future = std::async(
+    std::launch::async, [spawner_cmd]() { return std::system(spawner_cmd.c_str()); });
+
+  auto is_ctrl_3_active = [this]()
+  {
+    for (const auto & ctrl : cm_->get_loaded_controllers())
+    {
+      if (ctrl.info.name == "ctrl_3")
+      {
+        return ctrl.c->get_lifecycle_state().id() ==
+               lifecycle_msgs::msg::State::PRIMARY_STATE_ACTIVE;
+      }
+    }
+    return false;
+  };
+  const auto wait_start = std::chrono::steady_clock::now();
+  while (!is_ctrl_3_active())
+  {
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    ASSERT_LT(std::chrono::steady_clock::now() - wait_start, std::chrono::seconds(10))
+      << "Timed out waiting for ctrl_3 to become active";
+  }
+
+  // The pattern is anchored at the start so only the python process is signalled, not the
+  // wrapping shell or timeout. The builtin kill loop keeps the signals microseconds apart.
+  EXPECT_EQ(
+    std::system(
+      "pid=$(pgrep -o -f '^python3 -m coverage run .*controller_manager/[s]pawner ctrl_3 ') && "
+      "for i in $(seq 1 200); do kill -INT $pid 2>/dev/null; done"),
+    0)
+    << "Failed to interrupt the spawner";
+
+  spawner_future.get();
+
+  ASSERT_EQ(cm_->get_loaded_controllers().size(), 0ul);
+}
+
 TEST_F(TestLoadController, spawner_test_to_check_parameter_overriding)
 {
   const std::string main_test_file_path =
