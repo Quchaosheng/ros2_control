@@ -781,8 +781,8 @@ TEST_F(TestLoadController, unload_on_kill_with_repeated_sigint)
     "timeout --signal=KILL 30 " + std::string(coveragepy_script) +
     " $(ros2 pkg prefix controller_manager)/lib/controller_manager/spawner "
     "ctrl_3 -c test_controller_manager --unload-on-kill";
-  auto spawner_future = std::async(
-    std::launch::async, [spawner_cmd]() { return std::system(spawner_cmd.c_str()); });
+  auto spawner_future =
+    std::async(std::launch::async, [spawner_cmd]() { return std::system(spawner_cmd.c_str()); });
 
   auto is_ctrl_3_active = [this]()
   {
